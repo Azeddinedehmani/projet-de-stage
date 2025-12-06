@@ -26,8 +26,10 @@
                 <i id="theme-icon" class="fas fa-moon"></i>
             </div>
             
-            <!-- Notification Dropdown -->
-            @include('partials.notification-dropdown')
+            <!-- Notification Dropdown - ADMIN ONLY -->
+            @if(Auth::user()->isAdmin())
+                @include('partials.notification-dropdown')
+            @endif
             
             <!-- User Menu -->
             <div class="dropdown ms-3">
@@ -38,13 +40,18 @@
                 <ul class="dropdown-menu dropdown-menu-end">
                     <li><h6 class="dropdown-header">{{ Auth::user()->email }}</h6></li>
                     <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="{{ route('notifications.index') }}">
-                        <i class="fas fa-bell me-2"></i>Notifications
-                    </a></li>
-                    <li><a class="dropdown-item" href="{{ route('notifications.settings') }}">
-                        <i class="fas fa-cog me-2"></i>Paramètres notifications
-                    </a></li>
-                    <li><hr class="dropdown-divider"></li>
+                    
+                    <!-- Notification menu items - ADMIN ONLY -->
+                    @if(Auth::user()->isAdmin())
+                        <li><a class="dropdown-item" href="{{ route('notifications.index') }}">
+                            <i class="fas fa-bell me-2"></i>Notifications
+                        </a></li>
+                        <li><a class="dropdown-item" href="{{ route('notifications.settings') }}">
+                            <i class="fas fa-cog me-2"></i>Paramètres notifications
+                        </a></li>
+                        <li><hr class="dropdown-divider"></li>
+                    @endif
+                    
                     <li>
                         <form method="POST" action="{{ route('logout') }}" class="m-0">
                             @csrf

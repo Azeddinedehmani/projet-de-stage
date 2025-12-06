@@ -7,8 +7,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use App\Models\Client;
 use App\Models\Sale;
-use Illuminate\Support\Facades\Schema; // Add this import
-
+use Illuminate\Support\Facades\Schema;
 use App\Models\Prescription;
 use App\Models\ActivityLog;
 
@@ -29,26 +28,43 @@ class ClientController extends Controller
     {
         $query = Client::query();
 
-        // Search functionality
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
+        // Search functionality - CORRIGÉ
+        if ($request->filled('search')) {
+            $search = trim($request->search);
             $query->where(function($q) use ($search) {
-                $q->where('first_name', 'like', "%{$search}%")
-                  ->orWhere('last_name', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%")
-                  ->orWhere('phone', 'like', "%{$search}%")
-                  ->orWhere('insurance_number', 'like', "%{$search}%");
+                $q->where('first_name', 'LIKE', "%{$search}%")
+                  ->orWhere('last_name', 'LIKE', "%{$search}%")
+                  ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'LIKE', "%{$search}%")
+                  ->orWhere('email', 'LIKE', "%{$search}%")
+                  ->orWhere('phone', 'LIKE', "%{$search}%")
+                  ->orWhere('insurance_number', 'LIKE', "%{$search}%");
             });
         }
 
-        // Filter by status
-        if ($request->has('status') && $request->status !== '') {
-            $query->where('active', $request->status === 'active');
+        // Filter by status - CORRIGÉ
+        if ($request->filled('status')) {
+            if ($request->status === 'active') {
+                $query->where('active', true);
+            } elseif ($request->status === 'inactive') {
+                $query->where('active', false);
+            }
         }
 
+        // Récupérer tous les clients pour les statistiques
+        $allClients = Client::all();
+        
+        // Paginer les résultats filtrés
         $clients = $query->latest()->paginate(15);
         
-        return view('clients.index', compact('clients'));
+        // Ajouter les statistiques calculées séparément
+        $clientStats = [
+            'total' => $allClients->count(),
+            'active' => $allClients->where('active', true)->count(),
+            'with_allergies' => $allClients->whereNotNull('allergies')->where('allergies', '!=', '')->count(),
+            'total_revenue' => $allClients->sum('total_spent') ?? 0
+        ];
+        
+        return view('clients.index', compact('clients', 'clientStats'));
     }
 
     /**
@@ -211,143 +227,143 @@ class ClientController extends Controller
     }
 
     /**
- * Remove the specified client from storage - VERSION CORRIGÉE
- */
-public function destroy($id)
-{
-    try {
-        $client = Client::findOrFail($id);
-        $clientData = $client->toArray();
-        $clientName = $client->full_name;
-        
-        // Count associated data
-        $salesCount = $client->sales()->count();
-        $prescriptionsCount = Prescription::where('client_id', $id)->count();
-        
-        // Protection: only admins can delete clients with sales or prescriptions
-        if (($salesCount > 0 || $prescriptionsCount > 0) && !auth()->user()->isAdmin()) {
-            ActivityLog::logActivity(
-                'unauthorized_access',
-                "Tentative de suppression de client avec données associées par un non-administrateur: {$clientName}",
-                $client,
-                null,
-                ['attempted_by' => auth()->user()->name, 'user_role' => auth()->user()->role]
-            );
-            
-            return redirect()->route('clients.index')
-                ->withErrors(['error' => 'Seuls les administrateurs peuvent supprimer des clients ayant des données associées.']);
-        }
-
-        DB::beginTransaction();
-        
+     * Remove the specified client from storage - VERSION CORRIGÉE
+     */
+    public function destroy($id)
+    {
         try {
-            $deletionSummary = [
-                'client_name' => $clientName,
-                'client_data' => $clientData,
-                'sales_updated' => 0,
-                'prescriptions_updated' => 0,
-                'deleted_by' => auth()->user()->name,
-                'deletion_date' => now()->toDateTimeString()
-            ];
-
-            // 1. GÉRER LES VENTES - Vérifier d'abord si les colonnes existent
-            if ($salesCount > 0) {
-                // Vérifier si les colonnes de suivi client existent dans la table sales
-                $hasTrackingColumns = Schema::hasColumn('sales', 'client_name_at_deletion') && 
-                                    Schema::hasColumn('sales', 'deleted_client_data');
+            $client = Client::findOrFail($id);
+            $clientData = $client->toArray();
+            $clientName = $client->full_name;
+            
+            // Count associated data
+            $salesCount = $client->sales()->count();
+            $prescriptionsCount = Prescription::where('client_id', $id)->count();
+            
+            // Protection: only admins can delete clients with sales or prescriptions
+            if (($salesCount > 0 || $prescriptionsCount > 0) && !auth()->user()->isAdmin()) {
+                ActivityLog::logActivity(
+                    'unauthorized_access',
+                    "Tentative de suppression de client avec données associées par un non-administrateur: {$clientName}",
+                    $client,
+                    null,
+                    ['attempted_by' => auth()->user()->name, 'user_role' => auth()->user()->role]
+                );
                 
-                if ($hasTrackingColumns) {
-                    // Utiliser la nouvelle méthode avec colonnes de suivi
-                    $sales = $client->sales()->get();
+                return redirect()->route('clients.index')
+                    ->withErrors(['error' => 'Seuls les administrateurs peuvent supprimer des clients ayant des données associées.']);
+            }
+
+            DB::beginTransaction();
+            
+            try {
+                $deletionSummary = [
+                    'client_name' => $clientName,
+                    'client_data' => $clientData,
+                    'sales_updated' => 0,
+                    'prescriptions_updated' => 0,
+                    'deleted_by' => auth()->user()->name,
+                    'deletion_date' => now()->toDateTimeString()
+                ];
+
+                // 1. GÉRER LES VENTES - Vérifier d'abord si les colonnes existent
+                if ($salesCount > 0) {
+                    // Vérifier si les colonnes de suivi client existent dans la table sales
+                    $hasTrackingColumns = Schema::hasColumn('sales', 'client_name_at_deletion') && 
+                                        Schema::hasColumn('sales', 'deleted_client_data');
                     
-                    foreach ($sales as $sale) {
-                        $sale->update([
-                            'client_id' => null,
-                            'client_name_at_deletion' => $clientName,
-                            'deleted_client_data' => [
-                                'name' => $clientName,
-                                'email' => $client->email,
-                                'phone' => $client->phone,
-                                'insurance_number' => $client->insurance_number,
-                                'deleted_at' => now()->toDateTimeString(),
-                                'deleted_by' => auth()->user()->name
-                            ]
-                        ]);
+                    if ($hasTrackingColumns) {
+                        // Utiliser la nouvelle méthode avec colonnes de suivi
+                        $sales = $client->sales()->get();
+                        
+                        foreach ($sales as $sale) {
+                            $sale->update([
+                                'client_id' => null,
+                                'client_name_at_deletion' => $clientName,
+                                'deleted_client_data' => [
+                                    'name' => $clientName,
+                                    'email' => $client->email,
+                                    'phone' => $client->phone,
+                                    'insurance_number' => $client->insurance_number,
+                                    'deleted_at' => now()->toDateTimeString(),
+                                    'deleted_by' => auth()->user()->name
+                                ]
+                            ]);
+                        }
+                        $deletionSummary['sales_updated'] = $salesCount;
+                    } else {
+                        // Méthode de fallback - simplement mettre client_id à null
+                        $client->sales()->update(['client_id' => null]);
+                        $deletionSummary['sales_updated'] = $salesCount;
+                        
+                        // Avertir l'utilisateur que le suivi des clients supprimés n'est pas disponible
+                        session()->flash('warning', 'Les ventes ont été préservées mais sans informations détaillées du client supprimé. Veuillez exécuter les migrations pour activer le suivi complet.');
                     }
-                    $deletionSummary['sales_updated'] = $salesCount;
-                } else {
-                    // Méthode de fallback - simplement mettre client_id à null
-                    $client->sales()->update(['client_id' => null]);
-                    $deletionSummary['sales_updated'] = $salesCount;
+                }
+
+                // 2. GÉRER LES ORDONNANCES - Supprimer les ordonnances et leurs items
+                if ($prescriptionsCount > 0) {
+                    $prescriptions = Prescription::where('client_id', $id)->with('prescriptionItems')->get();
                     
-                    // Avertir l'utilisateur que le suivi des clients supprimés n'est pas disponible
-                    session()->flash('warning', 'Les ventes ont été préservées mais sans informations détaillées du client supprimé. Veuillez exécuter les migrations pour activer le suivi complet.');
+                    foreach ($prescriptions as $prescription) {
+                        // Supprimer les items d'ordonnance d'abord
+                        $prescription->prescriptionItems()->delete();
+                    }
+                    
+                    // Supprimer les ordonnances
+                    Prescription::where('client_id', $id)->delete();
+                    $deletionSummary['prescriptions_updated'] = $prescriptionsCount;
                 }
+
+                // 3. SUPPRIMER LE CLIENT
+                $client->delete();
+
+                // Log the complete deletion
+                ActivityLog::logActivity(
+                    'delete',
+                    "Client supprimé: {$clientName} | Ventes préservées: {$deletionSummary['sales_updated']} | Ordonnances supprimées: {$deletionSummary['prescriptions_updated']}",
+                    null,
+                    $clientData,
+                    $deletionSummary
+                );
+                
+                DB::commit();
+                
+                // Success message
+                $message = "Client supprimé avec succès!";
+                if ($deletionSummary['sales_updated'] > 0) {
+                    $message .= " {$deletionSummary['sales_updated']} vente(s) ont été préservées.";
+                }
+                if ($deletionSummary['prescriptions_updated'] > 0) {
+                    $message .= " {$deletionSummary['prescriptions_updated']} ordonnance(s) supprimée(s).";
+                }
+                
+                return redirect()->route('clients.index')
+                    ->with('success', $message);
+                    
+            } catch (\Exception $e) {
+                DB::rollback();
+                throw $e;
             }
 
-            // 2. GÉRER LES ORDONNANCES - Supprimer les ordonnances et leurs items
-            if ($prescriptionsCount > 0) {
-                $prescriptions = Prescription::where('client_id', $id)->with('prescriptionItems')->get();
-                
-                foreach ($prescriptions as $prescription) {
-                    // Supprimer les items d'ordonnance d'abord
-                    $prescription->prescriptionItems()->delete();
-                }
-                
-                // Supprimer les ordonnances
-                Prescription::where('client_id', $id)->delete();
-                $deletionSummary['prescriptions_updated'] = $prescriptionsCount;
-            }
-
-            // 3. SUPPRIMER LE CLIENT
-            $client->delete();
-
-            // Log the complete deletion
+        } catch (\Exception $e) {
             ActivityLog::logActivity(
-                'delete',
-                "Client supprimé: {$clientName} | Ventes préservées: {$deletionSummary['sales_updated']} | Ordonnances supprimées: {$deletionSummary['prescriptions_updated']}",
+                'error',
+                "Erreur lors de la suppression du client: " . $e->getMessage(),
+                isset($client) ? $client : null,
                 null,
-                $clientData,
-                $deletionSummary
+                [
+                    'client_id' => $id, 
+                    'error_details' => $e->getMessage(),
+                    'attempted_by' => auth()->user()->name,
+                    'error_trace' => $e->getTraceAsString()
+                ]
             );
             
-            DB::commit();
-            
-            // Success message
-            $message = "Client supprimé avec succès!";
-            if ($deletionSummary['sales_updated'] > 0) {
-                $message .= " {$deletionSummary['sales_updated']} vente(s) ont été préservées.";
-            }
-            if ($deletionSummary['prescriptions_updated'] > 0) {
-                $message .= " {$deletionSummary['prescriptions_updated']} ordonnance(s) supprimée(s).";
-            }
-            
             return redirect()->route('clients.index')
-                ->with('success', $message);
-                
-        } catch (\Exception $e) {
-            DB::rollback();
-            throw $e;
+                ->withErrors(['error' => 'Erreur lors de la suppression du client: ' . $e->getMessage()]);
         }
-
-    } catch (\Exception $e) {
-        ActivityLog::logActivity(
-            'error',
-            "Erreur lors de la suppression du client: " . $e->getMessage(),
-            isset($client) ? $client : null,
-            null,
-            [
-                'client_id' => $id, 
-                'error_details' => $e->getMessage(),
-                'attempted_by' => auth()->user()->name,
-                'error_trace' => $e->getTraceAsString()
-            ]
-        );
-        
-        return redirect()->route('clients.index')
-            ->withErrors(['error' => 'Erreur lors de la suppression du client: ' . $e->getMessage()]);
     }
-}
 
     /**
      * Deactivate a client instead of deleting (RECOMMENDED ALTERNATIVE)

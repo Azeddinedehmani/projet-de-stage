@@ -52,14 +52,23 @@ class AdminController extends Controller
             ->take(10)
             ->get();
 
-        // Sales chart data (last 7 days)
+        // *** CORRIGÉ : Sales chart data (last 7 days) avec calcul approprié et validation ***
         $salesChart = collect();
         for ($i = 6; $i >= 0; $i--) {
-            $date = now()->subDays($i);
-            $total = Sale::whereDate('sale_date', $date->format('Y-m-d'))->sum('total_amount') ?? 0;
+            $date = Carbon::now()->subDays($i); // Utilisation de Carbon::now() pour la date actuelle
+            $dateString = $date->format('Y-m-d');
+            
+            // Obtenir les ventes réelles pour cette date spécifique avec une meilleure requête
+            $dailySales = Sale::whereDate('sale_date', $dateString)->get();
+            $dailyTotal = $dailySales->sum('total_amount');
+            $dailyCount = $dailySales->count();
+            
             $salesChart->push([
-                'date' => $date->format('Y-m-d'),
-                'total' => $total
+                'date' => $dateString,
+                'formatted_date' => $date->format('d/m'), // Format d'affichage
+                'total' => (float) $dailyTotal, // S'assurer de la conversion en float
+                'count' => $dailyCount,
+                'average' => $dailyCount > 0 ? round($dailyTotal / $dailyCount, 2) : 0
             ]);
         }
 
@@ -77,7 +86,7 @@ class AdminController extends Controller
             ->take(5)
             ->get();
 
-        // Recent sales (last 10)
+        // Recent sales (last 10) with better data loading
         $recentSales = Sale::with(['client', 'user', 'saleItems.product'])
             ->latest('sale_date')
             ->take(10)
@@ -91,6 +100,24 @@ class AdminController extends Controller
             ->take(8)
             ->get();
 
+        // AJOUTÉ : Statistiques supplémentaires pour un tableau de bord complet
+        $additionalStats = [
+            'weekly_sales' => Sale::where('sale_date', '>=', now()->subDays(7))->sum('total_amount'),
+            'monthly_sales' => Sale::where('sale_date', '>=', now()->subDays(30))->sum('total_amount'),
+            'weekly_sales_count' => Sale::where('sale_date', '>=', now()->subDays(7))->count(),
+            'monthly_sales_count' => Sale::where('sale_date', '>=', now()->subDays(30))->count(),
+            'average_sale_amount' => Sale::avg('total_amount') ?? 0,
+            'products_total' => Product::count(),
+            'products_in_stock' => Product::where('stock_quantity', '>', 0)->count(),
+            'products_out_of_stock' => Product::where('stock_quantity', '<=', 0)->count(),
+        ];
+
+        // Fusionner les statistiques supplémentaires avec les principales
+        $stats = array_merge($stats, $additionalStats);
+
+        // AJOUTÉ : Calcul de la tendance des ventes pour de meilleures insights
+        $salesTrend = $this->calculateSalesTrend();
+
         return view('admin.dashboard', compact(
             'stats', 
             'recentActivities', 
@@ -98,8 +125,68 @@ class AdminController extends Controller
             'userActivityChart',
             'lowStockProducts',
             'recentSales',
-            'productsToOrder'
+            'productsToOrder',
+            'salesTrend'
         ));
+    }
+
+    /**
+     * *** NOUVELLE MÉTHODE : Rafraîchir les données du graphique des ventes via AJAX ***
+     */
+    public function refreshSalesChart(Request $request)
+    {
+        $salesChart = collect();
+        
+        // Générer les 7 derniers jours à partir d'aujourd'hui
+        for ($i = 6; $i >= 0; $i--) {
+            $date = Carbon::now()->subDays($i);
+            $dateString = $date->format('Y-m-d');
+            
+            // Obtenir les ventes réelles pour cette date
+            $dailySales = Sale::whereDate('sale_date', $dateString)->get();
+            $dailyTotal = $dailySales->sum('total_amount');
+            $dailyCount = $dailySales->count();
+            
+            $salesChart->push([
+                'date' => $dateString,
+                'total' => (float) $dailyTotal,
+                'formatted_date' => $date->format('d/m'),
+                'count' => $dailyCount
+            ]);
+        }
+
+        return response()->json([
+            'labels' => $salesChart->pluck('formatted_date'),
+            'data' => $salesChart->pluck('total'),
+            'total' => $salesChart->sum('total'),
+            'last_updated' => now()->format('H:i:s'),
+            'date_range' => $salesChart->first()['formatted_date'] . ' - ' . $salesChart->last()['formatted_date']
+        ]);
+    }
+
+    /**
+     * Calculer la tendance des ventes (croissance/déclin) - NOUVELLE MÉTHODE
+     */
+    private function calculateSalesTrend()
+    {
+        // Comparer cette semaine vs la semaine dernière
+        $thisWeekSales = Sale::where('sale_date', '>=', now()->startOfWeek())
+                            ->where('sale_date', '<=', now()->endOfWeek())
+                            ->sum('total_amount');
+                            
+        $lastWeekSales = Sale::where('sale_date', '>=', now()->subWeek()->startOfWeek())
+                            ->where('sale_date', '<=', now()->subWeek()->endOfWeek())
+                            ->sum('total_amount');
+
+        $trend = [
+            'this_week' => $thisWeekSales,
+            'last_week' => $lastWeekSales,
+            'difference' => $thisWeekSales - $lastWeekSales,
+            'percentage' => $lastWeekSales > 0 ? round((($thisWeekSales - $lastWeekSales) / $lastWeekSales) * 100, 1) : 0,
+            'direction' => $thisWeekSales > $lastWeekSales ? 'up' : ($thisWeekSales < $lastWeekSales ? 'down' : 'stable')
+        ];
+
+        return $trend;
     }
 
     /**
@@ -182,51 +269,52 @@ class AdminController extends Controller
     }
 
     /**
-     * Activity logs overview
+     * Activity logs overview - VERSION CORRIGÉE
      */
     public function activityLogs(Request $request)
     {
         $query = ActivityLog::with('user');
 
-        // Search functionality
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
+        // CORRIGÉ : Fonctionnalité de recherche
+        if ($request->filled('search')) {
+            $search = trim($request->search);
             $query->where(function($q) use ($search) {
                 $q->where('description', 'like', "%{$search}%")
                   ->orWhere('action', 'like', "%{$search}%")
                   ->orWhereHas('user', function($userQuery) use ($search) {
-                      $userQuery->where('name', 'like', "%{$search}%");
+                      $userQuery->where('name', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
                   });
             });
         }
 
-        // Filter by user
-        if ($request->has('user_id') && $request->user_id !== '') {
+        // CORRIGÉ : Filtrer par utilisateur
+        if ($request->filled('user_id') && $request->user_id !== '') {
             $query->where('user_id', $request->user_id);
         }
 
-        // Filter by action
-        if ($request->has('action') && $request->action !== '') {
+        // CORRIGÉ : Filtrer par action
+        if ($request->filled('action') && $request->action !== '') {
             $query->where('action', $request->action);
         }
 
-        // Filter by model type
-        if ($request->has('model_type') && $request->model_type !== '') {
+        // CORRIGÉ : Filtrer par type de modèle
+        if ($request->filled('model_type') && $request->model_type !== '') {
             $query->where('model_type', $request->model_type);
         }
 
-        // Filter by date range
-        if ($request->has('date_from') && !empty($request->date_from)) {
+        // CORRIGÉ : Filtrer par plage de dates
+        if ($request->filled('date_from')) {
             $query->whereDate('created_at', '>=', $request->date_from);
         }
         
-        if ($request->has('date_to') && !empty($request->date_to)) {
+        if ($request->filled('date_to')) {
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
         $activities = $query->latest()->paginate(50);
         
-        // Get filter options
+        // Obtenir les options de filtre
         $users = User::orderBy('name')->get();
         $actions = ActivityLog::distinct()->pluck('action')->filter()->sort()->values();
         $modelTypes = ActivityLog::distinct()->pluck('model_type')->filter()->sort()->values();
@@ -241,20 +329,36 @@ class AdminController extends Controller
     {
         $query = ActivityLog::with('user');
 
-        // Apply same filters as in activityLogs method
-        if ($request->has('user_id') && $request->user_id !== '') {
+        // Appliquer les mêmes filtres que dans la méthode activityLogs
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $query->where(function($q) use ($search) {
+                $q->where('description', 'like', "%{$search}%")
+                  ->orWhere('action', 'like', "%{$search}%")
+                  ->orWhereHas('user', function($userQuery) use ($search) {
+                      $userQuery->where('name', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        if ($request->filled('user_id') && $request->user_id !== '') {
             $query->where('user_id', $request->user_id);
         }
 
-        if ($request->has('action') && $request->action !== '') {
+        if ($request->filled('action') && $request->action !== '') {
             $query->where('action', $request->action);
         }
 
-        if ($request->has('date_from') && !empty($request->date_from)) {
+        if ($request->filled('model_type') && $request->model_type !== '') {
+            $query->where('model_type', $request->model_type);
+        }
+
+        if ($request->filled('date_from')) {
             $query->whereDate('created_at', '>=', $request->date_from);
         }
         
-        if ($request->has('date_to') && !empty($request->date_to)) {
+        if ($request->filled('date_to')) {
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 
@@ -472,8 +576,8 @@ class AdminController extends Controller
         $query = User::withCount('activityLogs');
 
         // Apply same filters as index
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
+        if ($request->filled('search')) {
+            $search = trim($request->search);
             $query->where(function($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('email', 'like', "%{$search}%")
@@ -481,11 +585,11 @@ class AdminController extends Controller
             });
         }
 
-        if ($request->has('role') && $request->role !== '') {
+        if ($request->filled('role') && $request->role !== '') {
             $query->where('role', $request->role);
         }
 
-        if ($request->has('status') && $request->status !== '') {
+        if ($request->filled('status') && $request->status !== '') {
             $query->where('is_active', $request->status === 'active');
         }
 
@@ -799,7 +903,7 @@ class AdminController extends Controller
                 ]);
                 
                 ActivityLog::logActivity(
-                    'update',
+                   'update',
                     'Mode maintenance activé' . ($request->duration ? " pour {$request->duration} minutes" : ''),
                     null,
                     null,
@@ -866,7 +970,9 @@ class AdminController extends Controller
             ActivityLog::where('created_at', '<', now()->subDays(90))->delete();
             
             // Clean expired password reset codes
-            \App\Models\PasswordResetCode::cleanExpired();
+            if (class_exists('\App\Models\PasswordResetCode')) {
+                \App\Models\PasswordResetCode::cleanExpired();
+            }
             
             // In MySQL, you could run OPTIMIZE TABLE commands here
             // DB::statement('OPTIMIZE TABLE activity_logs');

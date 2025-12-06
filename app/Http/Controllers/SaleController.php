@@ -11,6 +11,7 @@ use App\Models\SaleItem;
 use App\Models\Client;
 use App\Models\Product;
 use App\Models\ActivityLog;
+use App\Models\SystemSetting;
 
 class SaleController extends Controller
 {
@@ -29,47 +30,66 @@ class SaleController extends Controller
     {
         $query = Sale::with(['client', 'user', 'saleItems.product']);
 
-        // Search functionality
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
+        // Search functionality - CORRIGÉ
+        if ($request->filled('search')) {
+            $search = trim($request->search);
             $query->where(function($q) use ($search) {
-                $q->where('sale_number', 'like', "%{$search}%")
-                  ->orWhere('prescription_number', 'like', "%{$search}%")
+                $q->where('sale_number', 'LIKE', "%{$search}%")
+                  ->orWhere('prescription_number', 'LIKE', "%{$search}%")
+                  ->orWhere('notes', 'LIKE', "%{$search}%")
                   ->orWhereHas('client', function($clientQuery) use ($search) {
-                      $clientQuery->where('first_name', 'like', "%{$search}%")
-                                 ->orWhere('last_name', 'like', "%{$search}%");
+                      $clientQuery->where('first_name', 'LIKE', "%{$search}%")
+                                 ->orWhere('last_name', 'LIKE', "%{$search}%")
+                                 ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'LIKE', "%{$search}%")
+                                 ->orWhere('email', 'LIKE', "%{$search}%")
+                                 ->orWhere('phone', 'LIKE', "%{$search}%");
+                  })
+                  ->orWhereHas('user', function($userQuery) use ($search) {
+                      $userQuery->where('name', 'LIKE', "%{$search}%")
+                               ->orWhere('email', 'LIKE', "%{$search}%");
+                  })
+                  ->orWhereHas('saleItems.product', function($productQuery) use ($search) {
+                      $productQuery->where('name', 'LIKE', "%{$search}%")
+                                  ->orWhere('barcode', 'LIKE', "%{$search}%");
                   });
             });
         }
 
-        // Filter by payment status
-        if ($request->has('payment_status') && $request->payment_status !== '') {
+        // Filter by payment status - CORRIGÉ
+        if ($request->filled('payment_status')) {
             $query->where('payment_status', $request->payment_status);
         }
 
-        // Filter by date range
-        if ($request->has('date_from') && !empty($request->date_from)) {
+        // Filter by date range - CORRIGÉ
+        if ($request->filled('date_from')) {
             $query->whereDate('sale_date', '>=', $request->date_from);
         }
         
-        if ($request->has('date_to') && !empty($request->date_to)) {
+        if ($request->filled('date_to')) {
             $query->whereDate('sale_date', '<=', $request->date_to);
         }
 
-        // Filter by prescription
-        if ($request->has('has_prescription') && $request->has_prescription !== '') {
+        // Filter by prescription - CORRIGÉ
+        if ($request->filled('has_prescription')) {
             $query->where('has_prescription', $request->has_prescription === 'yes');
         }
 
+        // Filter by payment method - NOUVEAU FILTRE
+        if ($request->filled('payment_method')) {
+            $query->where('payment_method', $request->payment_method);
+        }
+
+        // Paginer les résultats filtrés
         $sales = $query->latest('sale_date')->paginate(15);
         
-        // Calculate summary statistics
+        // Calculate summary statistics sur toutes les ventes (pas seulement les filtrées)
         $allSales = Sale::all();
         $totalSales = $allSales->sum('total_amount');
         $salesCount = $allSales->count();
         $averageSale = $salesCount > 0 ? $totalSales / $salesCount : 0;
+        $todaySales = Sale::whereDate('sale_date', today())->count();
         
-        return view('sales.index', compact('sales', 'totalSales', 'salesCount', 'averageSale'));
+        return view('sales.index', compact('sales', 'totalSales', 'salesCount', 'averageSale', 'todaySales'));
     }
 
     /**
@@ -83,7 +103,10 @@ class SaleController extends Controller
         // Pre-select client if passed in URL
         $selectedClientId = $request->get('client_id');
         
-        return view('sales.create', compact('clients', 'products', 'selectedClientId'));
+        // Get current tax rate from system settings
+        $taxRate = SystemSetting::get('default_tax_rate', 20);
+        
+        return view('sales.create', compact('clients', 'products', 'selectedClientId', 'taxRate'));
     }
 
     /**
@@ -159,6 +182,9 @@ class SaleController extends Controller
             DB::beginTransaction();
             
             try {
+                // Get current tax rate from system settings
+                $taxRate = SystemSetting::get('default_tax_rate', 20) / 100;
+                
                 // Create sale
                 $sale = new Sale();
                 $sale->client_id = $request->client_id;
@@ -178,7 +204,7 @@ class SaleController extends Controller
                 }
                 
                 $sale->subtotal = $subtotal;
-                $sale->tax_amount = $subtotal * 0.20; // 20% tax
+                $sale->tax_amount = $subtotal * $taxRate; // Use dynamic tax rate
                 $sale->total_amount = $subtotal + $sale->tax_amount - $sale->discount_amount;
                 
                 $sale->save();
@@ -186,7 +212,8 @@ class SaleController extends Controller
                 Log::info('Sale created successfully', [
                     'sale_id' => $sale->id,
                     'sale_number' => $sale->sale_number,
-                    'total_amount' => $sale->total_amount
+                    'total_amount' => $sale->total_amount,
+                    'tax_rate_used' => $taxRate * 100 . '%'
                 ]);
 
                 // Create sale items and update stock
@@ -235,7 +262,8 @@ class SaleController extends Controller
                             'client_name' => $clientName,
                             'total_amount' => $sale->total_amount,
                             'payment_method' => $sale->payment_method,
-                            'products_count' => count($productData)
+                            'products_count' => count($productData),
+                            'tax_rate_used' => $taxRate * 100 . '%'
                         ]);
                     }
                 } catch (\Exception $e) {
@@ -357,21 +385,37 @@ class SaleController extends Controller
             
             // Restaurer le stock des produits
             foreach ($sale->saleItems as $item) {
-                $oldStock = $item->product->stock_quantity;
-                $item->product->increment('stock_quantity', $item->quantity);
-                $newStock = $item->product->fresh()->stock_quantity;
-                
-                $restoredProducts[] = [
-                    'name' => $item->product->name,
-                    'quantity' => $item->quantity
-                ];
-                
-                Log::info('Stock restored for product', [
-                    'product_id' => $item->product->id,
-                    'product_name' => $item->product->name,
-                    'quantity_restored' => $item->quantity,
-                    'new_stock' => $newStock
-                ]);
+                if ($item->product) { // Vérifier que le produit existe encore
+                    $oldStock = $item->product->stock_quantity;
+                    $item->product->increment('stock_quantity', $item->quantity);
+                    $newStock = $item->product->fresh()->stock_quantity;
+                    
+                    $restoredProducts[] = [
+                        'name' => $item->product->name,
+                        'quantity' => $item->quantity
+                    ];
+                    
+                    Log::info('Stock restored for product', [
+                        'product_id' => $item->product->id,
+                        'product_name' => $item->product->name,
+                        'quantity_restored' => $item->quantity,
+                        'new_stock' => $newStock
+                    ]);
+                    
+                    // Log stock change
+                    try {
+                        if (class_exists('App\Models\ActivityLog') && method_exists(ActivityLog::class, 'logStockChange')) {
+                            ActivityLog::logStockChange(
+                                $item->product,
+                                $oldStock,
+                                $newStock,
+                                "Restauration suite à suppression vente #{$sale->sale_number}"
+                            );
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning('Could not log stock restoration', ['error' => $e->getMessage()]);
+                    }
+                }
             }
             
             // Supprimer les items de vente
@@ -379,6 +423,25 @@ class SaleController extends Controller
             
             // Supprimer la vente
             $sale->delete();
+            
+            // Log deletion
+            try {
+                if (class_exists('App\Models\ActivityLog') && method_exists(ActivityLog::class, 'logActivity')) {
+                    ActivityLog::logActivity(
+                        'delete',
+                        "Vente supprimée: {$sale->sale_number} | Montant: {$sale->total_amount}€ | Produits restaurés: " . count($restoredProducts),
+                        null,
+                        $saleData,
+                        [
+                            'deleted_by' => auth()->user()->name,
+                            'restored_products' => $restoredProducts,
+                            'sale_data' => $saleData
+                        ]
+                    );
+                }
+            } catch (\Exception $e) {
+                Log::warning('Could not log sale deletion', ['error' => $e->getMessage()]);
+            }
             
             DB::commit();
             
@@ -390,7 +453,7 @@ class SaleController extends Controller
             ]);
 
             return redirect()->route('sales.index')
-                ->with('success', 'Vente supprimée avec succès! Le stock a été restauré.');
+                ->with('success', 'Vente supprimée avec succès! Le stock a été restauré pour ' . count($restoredProducts) . ' produit(s).');
                 
         } catch (\Exception $e) {
             DB::rollback();
@@ -435,4 +498,166 @@ class SaleController extends Controller
         
         return view('sales.print', compact('sale'));
     }
+
+    /**
+     * Get current tax rate from system settings for AJAX requests.
+     */
+    public function getTaxRate()
+    {
+        $taxRate = SystemSetting::get('default_tax_rate', 20);
+        
+        return response()->json([
+            'tax_rate' => $taxRate,
+            'tax_rate_decimal' => $taxRate / 100
+        ]);
+    }
+
+    /**
+     * Export sales to CSV
+     */
+    public function export(Request $request)
+    {
+        $query = Sale::with(['client', 'user', 'saleItems.product']);
+
+        // Apply same filters as index
+        if ($request->filled('search')) {
+            $search = trim($request->search);
+            $query->where(function($q) use ($search) {
+                $q->where('sale_number', 'LIKE', "%{$search}%")
+                  ->orWhere('prescription_number', 'LIKE', "%{$search}%")
+                  ->orWhereHas('client', function($clientQuery) use ($search) {
+                      $clientQuery->where('first_name', 'LIKE', "%{$search}%")
+                                 ->orWhere('last_name', 'LIKE', "%{$search}%");
+                  });
+            });
+        }
+
+        if ($request->filled('payment_status')) {
+            $query->where('payment_status', $request->payment_status);
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('sale_date', '>=', $request->date_from);
+        }
+        
+        if ($request->filled('date_to')) {
+            $query->whereDate('sale_date', '<=', $request->date_to);
+        }
+
+        if ($request->filled('has_prescription')) {
+            $query->where('has_prescription', $request->has_prescription === 'yes');
+        }
+
+        $sales = $query->latest('sale_date')->get();
+
+        // Log export activity
+        try {
+            if (class_exists('App\Models\ActivityLog') && method_exists(ActivityLog::class, 'logActivity')) {
+                ActivityLog::logActivity(
+                    'export',
+                    'Export de la liste des ventes (' . $sales->count() . ' ventes)',
+                    null,
+                    null,
+                    [
+                        'export_count' => $sales->count(),
+                        'exported_by' => auth()->user()->name,
+                        'filters_applied' => $request->only(['search', 'payment_status', 'date_from', 'date_to', 'has_prescription'])
+                    ]
+                );
+            }
+        } catch (\Exception $e) {
+            Log::warning('Could not log export activity', ['error' => $e->getMessage()]);
+        }
+
+        $filename = 'ventes_export_' . date('Y-m-d_H-i-s') . '.csv';
+        
+        $headers = [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+        ];
+
+        $callback = function() use ($sales) {
+            $file = fopen('php://output', 'w');
+            
+            // Add BOM for UTF-8
+            fwrite($file, "\xEF\xBB\xBF");
+            
+            // CSV headers
+            fputcsv($file, [
+                'N° Vente',
+                'Date',
+                'Client',
+                'Vendeur',
+                'Produits',
+                'Montant HT',
+                'TVA',
+                'Remise',
+                'Montant TTC',
+                'Méthode paiement',
+                'Statut paiement',
+                'Ordonnance',
+                'N° Ordonnance',
+                'Notes'
+            ], ';');
+
+            foreach ($sales as $sale) {
+                $products = $sale->saleItems->map(function($item) {
+                    return ($item->product ? $item->product->name : 'Produit supprimé') . ' (x' . $item->quantity . ')';
+                })->implode(', ');
+
+                fputcsv($file, [
+                    $sale->sale_number,
+                    $sale->sale_date ? $sale->sale_date->format('d/m/Y H:i') : 'N/A',
+                    $sale->client ? $sale->client->full_name : 'Client anonyme',
+                    $sale->user ? $sale->user->name : 'Utilisateur supprimé',
+                    $products,
+                    number_format($sale->subtotal, 2, ',', ' '),
+                    number_format($sale->tax_amount, 2, ',', ' '),
+                    number_format($sale->discount_amount, 2, ',', ' '),
+                    number_format($sale->total_amount, 2, ',', ' '),
+                    ucfirst($sale->payment_method),
+                    ucfirst($sale->payment_status),
+                    $sale->has_prescription ? 'Oui' : 'Non',
+                    $sale->prescription_number ?: 'N/A',
+                    $sale->notes ?: 'Aucune'
+                ], ';');
+            }
+
+            fclose($file);
+        };
+
+        return response()->stream($callback, 200, $headers);
+    }
+
+    /**
+     * Get sales statistics for dashboard/reports
+     */
+    public function getStatistics(Request $request)
+    {
+        $startDate = $request->get('start_date', now()->startOfMonth());
+        $endDate = $request->get('end_date', now()->endOfMonth());
+        
+        $statistics = [
+            'total_sales' => Sale::whereBetween('sale_date', [$startDate, $endDate])->sum('total_amount'),
+            'sales_count' => Sale::whereBetween('sale_date', [$startDate, $endDate])->count(),
+            'average_sale' => Sale::whereBetween('sale_date', [$startDate, $endDate])->avg('total_amount'),
+            'today_sales' => Sale::whereDate('sale_date', today())->sum('total_amount'),
+            'today_count' => Sale::whereDate('sale_date', today())->count(),
+            'payment_methods' => Sale::whereBetween('sale_date', [$startDate, $endDate])
+                ->groupBy('payment_method')
+                ->selectRaw('payment_method, count(*) as count, sum(total_amount) as total')
+                ->get(),
+            'top_products' => SaleItem::join('sales', 'sale_items.sale_id', '=', 'sales.id')
+                ->join('products', 'sale_items.product_id', '=', 'products.id')
+                ->whereBetween('sales.sale_date', [$startDate, $endDate])
+                ->groupBy('products.id', 'products.name')
+                ->selectRaw('products.name, sum(sale_items.quantity) as total_quantity, sum(sale_items.total_price) as total_revenue')
+                ->orderBy('total_quantity', 'desc')
+                ->take(10)
+                ->get(),
+        ];
+        
+        return response()->json($statistics);
+    }
+    
 }

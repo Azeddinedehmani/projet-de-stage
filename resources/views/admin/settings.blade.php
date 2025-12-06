@@ -8,12 +8,7 @@
     </div>
     <div class="col-md-4 text-end">
         <div class="btn-group">
-            <a href="{{ route('admin.administration') }}" class="btn btn-secondary">
-                <i class="fas fa-cogs me-1"></i> Administration
-            </a>
-            <a href="{{ route('admin.users.index') }}" class="btn btn-outline-secondary">
-                <i class="fas fa-users me-1"></i> Utilisateurs
-            </a>
+           
         </div>
     </div>
 </div>
@@ -42,10 +37,7 @@ function getGroupIcon($group) {
         'app' => 'fa-mobile-alt',
         'pharmacy' => 'fa-clinic-medical',
         'tax' => 'fa-calculator',
-        'stock' => 'fa-boxes',
         'security' => 'fa-shield-alt',
-        'backup' => 'fa-database',
-        'prescription' => 'fa-file-prescription',
         default => 'fa-cog'
     };
 }
@@ -55,19 +47,35 @@ function getGroupName($group) {
         'app' => 'Application',
         'pharmacy' => 'Pharmacie',
         'tax' => 'Fiscalité',
-        'stock' => 'Stock et inventaire',
         'security' => 'Sécurité',
-        'backup' => 'Sauvegarde',
-        'prescription' => 'Ordonnances',
         default => ucfirst($group)
     };
 }
+
+// Filter out unwanted sections
+$filteredSettings = $settings->reject(function($groupSettings, $group) {
+    return in_array($group, [
+        'stock', 
+        'backup', 
+        'prescription',
+        'auth',
+        'customers',
+        'general',
+        'invoicing',
+        'logs',
+        'maintenance',
+        'notifications',
+        'reports',
+        'suppliers',
+        'ui'
+    ]);
+});
 @endphp
 
 <form action="{{ route('admin.settings.update') }}" method="POST">
     @csrf
     
-    @forelse($settings as $group => $groupSettings)
+    @forelse($filteredSettings as $group => $groupSettings)
         <div class="card mb-4">
             <div class="card-header bg-light">
                 <h5 class="card-title mb-0">
@@ -104,13 +112,6 @@ function getGroupName($group) {
                                        id="setting_{{ $setting->key }}" 
                                        name="settings[{{ $setting->key }}]" 
                                        value="{{ $setting->typed_value }}">
-                            @elseif($setting->key === 'backup_frequency')
-                                <select class="form-select" id="setting_{{ $setting->key }}" 
-                                        name="settings[{{ $setting->key }}]">
-                                    <option value="daily" {{ $setting->typed_value === 'daily' ? 'selected' : '' }}>Quotidienne</option>
-                                    <option value="weekly" {{ $setting->typed_value === 'weekly' ? 'selected' : '' }}>Hebdomadaire</option>
-                                    <option value="monthly" {{ $setting->typed_value === 'monthly' ? 'selected' : '' }}>Mensuelle</option>
-                                </select>
                             @else
                                 <input type="text" class="form-control" 
                                        id="setting_{{ $setting->key }}" 
@@ -142,7 +143,7 @@ function getGroupName($group) {
         </div>
     @endforelse
 
-    @if(!$settings->isEmpty())
+    @if(!$filteredSettings->isEmpty())
         <div class="card">
             <div class="card-body">
                 <div class="d-flex justify-content-between align-items-center">

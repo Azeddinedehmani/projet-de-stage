@@ -1,5 +1,5 @@
 <?php
-// routes/web.php - Updated with prescription delete route
+// routes/web.php - Updated with admin-only notification routes and refresh-sales-chart
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
@@ -17,7 +17,7 @@ use App\Http\Controllers\UserController;
 
 /*
 |--------------------------------------------------------------------------
-| Web Routes - Updated with Role-based Access Control
+| Web Routes - Updated with Admin-only Notifications and Chart Refresh
 |--------------------------------------------------------------------------
 */
 
@@ -52,38 +52,6 @@ Route::middleware('auth')->group(function () {
     Route::get('/admin/dashboard', [AdminController::class, 'index'])->name('admin.dashboard')->middleware('admin');
     Route::get('/pharmacist/dashboard', [PharmacistController::class, 'index'])->name('pharmacist.dashboard')->middleware('pharmacist');
     
-    // Routes des rapports - ADMIN ONLY
-    Route::prefix('rapports')->name('reports.')->middleware('admin')->group(function () {
-        Route::get('/', [ReportController::class, 'index'])->name('index');
-        Route::get('/ventes', [ReportController::class, 'sales'])->name('sales');
-        Route::get('/inventaire', [ReportController::class, 'inventory'])->name('inventory');
-        Route::get('/clients', [ReportController::class, 'clients'])->name('clients');
-        Route::get('/ordonnances', [ReportController::class, 'prescriptions'])->name('prescriptions');
-        Route::get('/financier', [ReportController::class, 'financial'])->name('financial');
-        Route::get('/utilisateurs', [ReportController::class, 'users'])->name('users');
-        Route::get('/fournisseurs', [ReportController::class, 'suppliers'])->name('suppliers');
-    });
-
-    // Notification routes - AVAILABLE TO BOTH ROLES
-    Route::prefix('notifications')->name('notifications.')->group(function () {
-        Route::get('/', [NotificationController::class, 'index'])->name('index');
-        Route::get('/recent', [NotificationController::class, 'getRecent'])->name('recent');
-        Route::get('/count', [NotificationController::class, 'getUnreadCount'])->name('count');
-        Route::get('/settings', [NotificationController::class, 'settings'])->name('settings');
-        Route::post('/settings', [NotificationController::class, 'updateSettings'])->name('settings.update');
-        
-    Route::post('/{id}/mark-read', [NotificationController::class, 'markAsRead'])->name('mark-read');
-        Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
-        
-        Route::delete('/{id}', [NotificationController::class, 'destroy'])->name('destroy');
-        Route::delete('/read/all', [NotificationController::class, 'deleteAllRead'])->name('delete-read');
-        
-        // Test route (only in local environment)
-        if (app()->environment('local')) {
-            Route::post('/test', [NotificationController::class, 'createTest'])->name('test');
-        }
-    });
-    
     // Inventory management routes - AVAILABLE TO BOTH ROLES
     Route::resource('inventory', ProductController::class)->names([
         'index' => 'inventory.index',
@@ -107,16 +75,16 @@ Route::middleware('auth')->group(function () {
     Route::resource('sales', SaleController::class);
     Route::get('sales/{id}/print', [SaleController::class, 'print'])->name('sales.print');
     Route::get('sales/product/{id}', [SaleController::class, 'getProduct'])->name('sales.get-product');
+    Route::get('/sales/tax-rate', [SaleController::class, 'getTaxRate'])->name('sales.tax-rate');
     
     // Prescription management routes - AVAILABLE TO BOTH ROLES WITH DELETE FUNCTIONALITY
     Route::resource('prescriptions', PrescriptionController::class);
     Route::get('prescriptions/{id}/deliver', [PrescriptionController::class, 'deliver'])->name('prescriptions.deliver');
     Route::post('prescriptions/{id}/deliver', [PrescriptionController::class, 'processDelivery'])->name('prescriptions.process-delivery');
     Route::get('prescriptions/{id}/print', [PrescriptionController::class, 'print'])->name('prescriptions.print');
-    // NEW: Add dependency check route for prescriptions
     Route::get('prescriptions/{id}/dependencies', [PrescriptionController::class, 'checkDependencies'])->name('prescriptions.dependencies');
     
-    // Admin-only routes - SUPPLIERS & PURCHASES
+    // Admin-only routes - SUPPLIERS, PURCHASES, REPORTS, NOTIFICATIONS
     Route::middleware('admin')->group(function () {
         // Supplier management routes - ADMIN ONLY
         Route::resource('suppliers', SupplierController::class)->names([
@@ -144,6 +112,38 @@ Route::middleware('auth')->group(function () {
         Route::get('purchases/{id}/receive', [PurchaseController::class, 'receive'])->name('purchases.receive');
         Route::post('purchases/{id}/receive', [PurchaseController::class, 'processReception'])->name('purchases.process-reception');
         Route::patch('purchases/{id}/cancel', [PurchaseController::class, 'cancel'])->name('purchases.cancel');
+        
+        // Routes des rapports - ADMIN ONLY
+        Route::prefix('rapports')->name('reports.')->group(function () {
+            Route::get('/', [ReportController::class, 'index'])->name('index');
+            Route::get('/ventes', [ReportController::class, 'sales'])->name('sales');
+            Route::get('/inventaire', [ReportController::class, 'inventory'])->name('inventory');
+            Route::get('/clients', [ReportController::class, 'clients'])->name('clients');
+            Route::get('/ordonnances', [ReportController::class, 'prescriptions'])->name('prescriptions');
+            Route::get('/financier', [ReportController::class, 'financial'])->name('financial');
+            Route::get('/utilisateurs', [ReportController::class, 'users'])->name('users');
+            Route::get('/fournisseurs', [ReportController::class, 'suppliers'])->name('suppliers');
+        });
+
+        // Notification routes - ADMIN ONLY
+        Route::prefix('notifications')->name('notifications.')->group(function () {
+            Route::get('/', [NotificationController::class, 'index'])->name('index');
+            Route::get('/recent', [NotificationController::class, 'getRecent'])->name('recent');
+            Route::get('/count', [NotificationController::class, 'getUnreadCount'])->name('count');
+            Route::get('/settings', [NotificationController::class, 'settings'])->name('settings');
+            Route::post('/settings', [NotificationController::class, 'updateSettings'])->name('settings.update');
+            
+            Route::post('/{id}/mark-read', [NotificationController::class, 'markAsRead'])->name('mark-read');
+            Route::post('/mark-all-read', [NotificationController::class, 'markAllAsRead'])->name('mark-all-read');
+            
+            Route::delete('/{id}', [NotificationController::class, 'destroy'])->name('destroy');
+            Route::delete('/read/all', [NotificationController::class, 'deleteAllRead'])->name('delete-read');
+            
+            // Test route (only in local environment)
+            if (app()->environment('local')) {
+                Route::post('/test', [NotificationController::class, 'createTest'])->name('test');
+            }
+        });
     });
     
     // Admin panel routes - ADMIN ONLY
@@ -151,6 +151,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/administration', [AdminController::class, 'administration'])->name('administration');
         Route::get('/settings', [AdminController::class, 'settings'])->name('settings');
         Route::post('/settings', [AdminController::class, 'updateSettings'])->name('settings.update');
+        
+        // *** NOUVELLE ROUTE POUR LA MISE À JOUR DU GRAPHIQUE ***
+        Route::get('/refresh-sales-chart', [AdminController::class, 'refreshSalesChart'])->name('refresh-sales-chart');
         
         // System management routes
         Route::get('/system-status', [AdminController::class, 'systemStatus'])->name('system-status');
@@ -183,7 +186,7 @@ Route::middleware('auth')->group(function () {
     });
 });
 
-// Block access to report routes for pharmacists
+// Block access to restricted routes for pharmacists
 Route::middleware(['auth', 'pharmacist'])->group(function () {
     // Redirect pharmacists trying to access reports to their dashboard
     Route::get('/rapports{any?}', function () {
@@ -200,10 +203,42 @@ Route::middleware(['auth', 'pharmacist'])->group(function () {
         return redirect()->route('pharmacist.dashboard')->with('error', 'Accès non autorisé. La gestion des achats est réservée aux administrateurs.');
     })->where('any', '.*');
     
+    // Block access to notification routes for pharmacists
+    Route::get('/notifications{any?}', function () {
+        return redirect()->route('pharmacist.dashboard')->with('error', 'Accès non autorisé. La gestion des notifications est réservée aux administrateurs.');
+    })->where('any', '.*');
+    
     // Block access to admin routes for pharmacists
     Route::get('/admin{any?}', function () {
         return redirect()->route('pharmacist.dashboard')->with('error', 'Accès non autorisé. Les fonctions d\'administration sont réservées aux responsables.');
     })->where('any', '.*');
+});
+
+// PDF Export routes
+Route::middleware(['auth'])->group(function () {
+    Route::get('/reports/sales/pdf', [App\Http\Controllers\PdfExportController::class, 'exportSalesReport'])
+        ->name('reports.sales.pdf');
+    
+    Route::get('/reports/inventory/pdf', [App\Http\Controllers\PdfExportController::class, 'exportInventoryReport'])
+        ->name('reports.inventory.pdf');
+    
+    Route::get('/reports/clients/pdf', [App\Http\Controllers\PdfExportController::class, 'exportClientsReport'])
+        ->name('reports.clients.pdf');
+    
+    Route::get('/reports/prescriptions/pdf', [App\Http\Controllers\PdfExportController::class, 'exportPrescriptionsReport'])
+        ->name('reports.prescriptions.pdf');
+    
+    Route::get('/reports/financial/pdf', [App\Http\Controllers\PdfExportController::class, 'exportFinancialReport'])
+        ->name('reports.financial.pdf');
+    
+    Route::get('/reports/suppliers/pdf', [App\Http\Controllers\PdfExportController::class, 'exportSuppliersReport'])
+        ->name('reports.suppliers.pdf');
+    
+    // Admin only routes
+    Route::middleware(['admin'])->group(function () {
+        Route::get('/reports/users/pdf', [App\Http\Controllers\PdfExportController::class, 'exportUsersReport'])
+            ->name('reports.users.pdf');
+    });
 });
 
 // Fallback route for undefined routes

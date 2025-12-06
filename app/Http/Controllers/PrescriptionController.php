@@ -22,31 +22,40 @@ class PrescriptionController extends Controller
     {
         $query = Prescription::with(['client', 'createdBy', 'prescriptionItems.product']);
 
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
+        // Search functionality - CORRIGÉ
+        if ($request->filled('search')) {
+            $search = trim($request->search);
             $query->where(function($q) use ($search) {
-                $q->where('prescription_number', 'like', "%{$search}%")
-                  ->orWhere('doctor_name', 'like', "%{$search}%")
+                $q->where('prescription_number', 'LIKE', "%{$search}%")
+                  ->orWhere('doctor_name', 'LIKE', "%{$search}%")
+                  ->orWhere('doctor_speciality', 'LIKE', "%{$search}%")
+                  ->orWhere('doctor_phone', 'LIKE', "%{$search}%")
                   ->orWhereHas('client', function($clientQuery) use ($search) {
-                      $clientQuery->where('first_name', 'like', "%{$search}%")
-                                 ->orWhere('last_name', 'like', "%{$search}%");
+                      $clientQuery->where('first_name', 'LIKE', "%{$search}%")
+                                 ->orWhere('last_name', 'LIKE', "%{$search}%")
+                                 ->orWhere(DB::raw("CONCAT(first_name, ' ', last_name)"), 'LIKE', "%{$search}%")
+                                 ->orWhere('email', 'LIKE', "%{$search}%")
+                                 ->orWhere('phone', 'LIKE', "%{$search}%");
                   });
             });
         }
 
-        if ($request->has('status') && $request->status !== '') {
+        // Filter by status - CORRIGÉ
+        if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
-        if ($request->has('date_from') && !empty($request->date_from)) {
+        // Date filters - CORRIGÉ
+        if ($request->filled('date_from')) {
             $query->whereDate('prescription_date', '>=', $request->date_from);
         }
         
-        if ($request->has('date_to') && !empty($request->date_to)) {
+        if ($request->filled('date_to')) {
             $query->whereDate('prescription_date', '<=', $request->date_to);
         }
 
-        if ($request->has('expiry_filter') && $request->expiry_filter !== '') {
+        // Expiry filter - CORRIGÉ
+        if ($request->filled('expiry_filter')) {
             if ($request->expiry_filter === 'expired') {
                 $query->expired();
             } elseif ($request->expiry_filter === 'expiring_soon') {
@@ -54,12 +63,15 @@ class PrescriptionController extends Controller
             }
         }
 
-        $prescriptions = $query->latest('prescription_date')->paginate(15);
-        
-        $totalPrescriptions = $query->count();
+        // Calculer les statistiques sur toutes les prescriptions (pas seulement les filtrées)
+        $allPrescriptions = Prescription::all();
+        $totalPrescriptions = $allPrescriptions->count();
         $pendingCount = Prescription::pending()->count();
         $expiredCount = Prescription::expired()->count();
         $expiringCount = Prescription::active()->where('expiry_date', '<=', now()->addDays(7))->count();
+
+        // Paginer les résultats filtrés
+        $prescriptions = $query->latest('prescription_date')->paginate(15);
         
         return view('prescriptions.index', compact(
             'prescriptions', 'totalPrescriptions', 'pendingCount', 'expiredCount', 'expiringCount'

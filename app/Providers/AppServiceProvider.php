@@ -11,6 +11,8 @@ use App\Observers\ProductObserver;
 use App\Observers\SaleObserver;
 use App\Observers\PrescriptionObserver;
 use App\Observers\PurchaseObserver;
+use Illuminate\Pagination\Paginator;
+
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -35,5 +37,7 @@ class AppServiceProvider extends ServiceProvider
         Sale::observe(SaleObserver::class);
         Prescription::observe(PrescriptionObserver::class);
         Purchase::observe(PurchaseObserver::class);
+         Paginator::useBootstrapFive();
+
     }
 }

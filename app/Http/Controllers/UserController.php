@@ -10,7 +10,6 @@ use App\Models\User;
 use App\Models\ActivityLog;
 use App\Models\SystemSetting;
 
-
 class UserController extends Controller
 {
     public function __construct()
@@ -20,15 +19,15 @@ class UserController extends Controller
     }
 
     /**
-     * Display a listing of users
+     * Display a listing of users - FIXED VERSION
      */
     public function index(Request $request)
     {
         $query = User::withCount('activityLogs');
 
-        // Search functionality
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
+        // FIXED: Search functionality
+        if ($request->filled('search')) {
+            $search = trim($request->search);
             $query->where(function($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('email', 'like', "%{$search}%")
@@ -36,14 +35,15 @@ class UserController extends Controller
             });
         }
 
-        // Filter by role
-        if ($request->has('role') && $request->role !== '') {
+        // FIXED: Filter by role
+        if ($request->filled('role') && $request->role !== '') {
             $query->where('role', $request->role);
         }
 
-        // Filter by status
-        if ($request->has('status') && $request->status !== '') {
-            $query->where('is_active', $request->status === 'active');
+        // FIXED: Filter by status
+        if ($request->filled('status') && $request->status !== '') {
+            $isActive = $request->status === 'active';
+            $query->where('is_active', $isActive);
         }
 
         $users = $query->latest()->paginate(15);
@@ -64,15 +64,15 @@ class UserController extends Controller
     }
 
     /**
-     * Export users to CSV
+     * Export users to CSV - FIXED VERSION
      */
     public function export(Request $request)
     {
         $query = User::withCount('activityLogs');
 
-        // Apply same filters as in index method
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
+        // FIXED: Apply same filters as in index method
+        if ($request->filled('search')) {
+            $search = trim($request->search);
             $query->where(function($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('email', 'like', "%{$search}%")
@@ -80,12 +80,13 @@ class UserController extends Controller
             });
         }
 
-        if ($request->has('role') && $request->role !== '') {
+        if ($request->filled('role') && $request->role !== '') {
             $query->where('role', $request->role);
         }
 
-        if ($request->has('status') && $request->status !== '') {
-            $query->where('is_active', $request->status === 'active');
+        if ($request->filled('status') && $request->status !== '') {
+            $isActive = $request->status === 'active';
+            $query->where('is_active', $isActive);
         }
 
         $users = $query->latest()->get();
@@ -220,7 +221,7 @@ class UserController extends Controller
         $stats = [
             'total_activities' => $user->activityLogs()->count(),
             'logins_count' => $user->activityLogs()->where('action', 'login')->count(),
-            'sales_count' => $user->activityLogs()->forModel('App\Models\Sale')->count(),
+            'sales_count' => $user->activityLogs()->where('model_type', 'App\Models\Sale')->count(),
             'last_activity' => $user->activityLogs()->latest()->first(),
         ];
 
@@ -410,7 +411,7 @@ class UserController extends Controller
     }
 
     /**
-     * View user activity logs
+     * View user activity logs - FIXED VERSION
      */
     public function activityLogs($id, Request $request)
     {
@@ -418,17 +419,17 @@ class UserController extends Controller
         
         $query = $user->activityLogs();
 
-        // Filter by action
-        if ($request->has('action') && $request->action !== '') {
+        // FIXED: Filter by action
+        if ($request->filled('action') && $request->action !== '') {
             $query->where('action', $request->action);
         }
 
-        // Filter by date range
-        if ($request->has('date_from') && !empty($request->date_from)) {
+        // FIXED: Filter by date range
+        if ($request->filled('date_from')) {
             $query->whereDate('created_at', '>=', $request->date_from);
         }
         
-        if ($request->has('date_to') && !empty($request->date_to)) {
+        if ($request->filled('date_to')) {
             $query->whereDate('created_at', '<=', $request->date_to);
         }
 

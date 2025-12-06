@@ -101,14 +101,38 @@ class Sale extends Model
     }
 
     /**
-     * Calculate and update totals.
+     * Calculate and update totals using current tax rate.
      */
     public function calculateTotals()
     {
+        // Get current tax rate from system settings
+        $taxRate = SystemSetting::get('default_tax_rate', 20) / 100;
+        
         $this->subtotal = $this->saleItems()->sum('total_price');
-        $this->tax_amount = $this->subtotal * 0.20; // 20% tax
+        $this->tax_amount = $this->subtotal * $taxRate; // Use dynamic tax rate
         $this->total_amount = $this->subtotal + $this->tax_amount - ($this->discount_amount ?? 0);
         $this->save();
+    }
+
+    /**
+     * Get the tax rate used for this sale.
+     */
+    public function getTaxRateAttribute()
+    {
+        if ($this->subtotal > 0 && $this->tax_amount > 0) {
+            return round(($this->tax_amount / $this->subtotal) * 100, 2);
+        }
+        
+        // Fallback to current system setting
+        return SystemSetting::get('default_tax_rate', 20);
+    }
+
+    /**
+     * Get the tax rate as decimal for calculations.
+     */
+    public function getTaxRateDecimalAttribute()
+    {
+        return $this->tax_rate / 100;
     }
 
     /**

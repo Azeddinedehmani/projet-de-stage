@@ -24,12 +24,12 @@ class NotificationController extends Controller
         $query = auth()->user()->notifications()->latest();
 
         // Filter by type
-        if ($request->has('type') && $request->type !== '') {
+        if ($request->filled('type')) {
             $query->where('type', $request->type);
         }
 
         // Filter by read status
-        if ($request->has('status')) {
+        if ($request->filled('status')) {
             if ($request->status === 'unread') {
                 $query->unread();
             } elseif ($request->status === 'read') {
@@ -38,17 +38,33 @@ class NotificationController extends Controller
         }
 
         // Filter by priority
-        if ($request->has('priority') && $request->priority !== '') {
+        if ($request->filled('priority')) {
             $query->where('priority', $request->priority);
         }
 
-        $notifications = $query->active()->paginate(20);
+        // Get paginated notifications
+        $notifications = $query->active()
+                              ->paginate(20)
+                              ->appends($request->query());
         
-        // Get counts for badges
-        $unreadCount = auth()->user()->notifications()->unread()->active()->count();
+        // Calculate separate statistics to avoid conflicts with pagination
         $totalCount = auth()->user()->notifications()->active()->count();
+        $unreadCount = auth()->user()->notifications()->unread()->active()->count();
+        $readCount = auth()->user()->notifications()->read()->active()->count();
+        $highPriorityCount = auth()->user()->notifications()->where('priority', 'high')->active()->count();
+        $todayCount = auth()->user()->notifications()
+            ->where('created_at', '>=', today())
+            ->active()
+            ->count();
 
-        return view('notifications.index', compact('notifications', 'unreadCount', 'totalCount'));
+        return view('notifications.index', compact(
+            'notifications',
+            'totalCount',
+            'unreadCount', 
+            'readCount',
+            'highPriorityCount',
+            'todayCount'
+        ));
     }
 
     /**
@@ -97,19 +113,27 @@ class NotificationController extends Controller
      */
     public function markAsRead($id)
     {
-        $notification = auth()->user()->notifications()->findOrFail($id);
-        $notification->markAsRead();
+        try {
+            $notification = auth()->user()->notifications()->findOrFail($id);
+            $notification->markAsRead();
 
-        if (request()->expectsJson()) {
-            return response()->json(['success' => true]);
+            if (request()->expectsJson()) {
+                return response()->json(['success' => true]);
+            }
+
+            // If there's an action URL, redirect to it
+            if ($notification->action_url) {
+                return redirect($notification->action_url);
+            }
+
+            return redirect()->back()->with('success', 'Notification marquée comme lue.');
+        } catch (\Exception $e) {
+            if (request()->expectsJson()) {
+                return response()->json(['error' => 'Notification introuvable.'], 404);
+            }
+            
+            return redirect()->back()->withErrors(['error' => 'Notification introuvable.']);
         }
-
-        // If there's an action URL, redirect to it
-        if ($notification->action_url) {
-            return redirect($notification->action_url);
-        }
-
-        return redirect()->back()->with('success', 'Notification marquée comme lue.');
     }
 
     /**
@@ -117,16 +141,31 @@ class NotificationController extends Controller
      */
     public function markAllAsRead()
     {
-        auth()->user()->notifications()
-            ->unread()
-            ->active()
-            ->update(['read_at' => now()]);
+        try {
+            $updatedCount = auth()->user()->notifications()
+                ->unread()
+                ->active()
+                ->update(['read_at' => now()]);
 
-        if (request()->expectsJson()) {
-            return response()->json(['success' => true]);
+            if (request()->expectsJson()) {
+                return response()->json([
+                    'success' => true, 
+                    'updated_count' => $updatedCount
+                ]);
+            }
+
+            if ($updatedCount > 0) {
+                return redirect()->back()->with('success', "Toutes les notifications ({$updatedCount}) ont été marquées comme lues.");
+            } else {
+                return redirect()->back()->with('info', 'Aucune notification non lue à marquer.');
+            }
+        } catch (\Exception $e) {
+            if (request()->expectsJson()) {
+                return response()->json(['error' => 'Erreur lors de la mise à jour.'], 500);
+            }
+            
+            return redirect()->back()->withErrors(['error' => 'Erreur lors de la mise à jour des notifications.']);
         }
-
-        return redirect()->back()->with('success', 'Toutes les notifications ont été marquées comme lues.');
     }
 
     /**
@@ -134,14 +173,22 @@ class NotificationController extends Controller
      */
     public function destroy($id)
     {
-        $notification = auth()->user()->notifications()->findOrFail($id);
-        $notification->delete();
+        try {
+            $notification = auth()->user()->notifications()->findOrFail($id);
+            $notification->delete();
 
-        if (request()->expectsJson()) {
-            return response()->json(['success' => true]);
+            if (request()->expectsJson()) {
+                return response()->json(['success' => true]);
+            }
+
+            return redirect()->back()->with('success', 'Notification supprimée.');
+        } catch (\Exception $e) {
+            if (request()->expectsJson()) {
+                return response()->json(['error' => 'Notification introuvable.'], 404);
+            }
+            
+            return redirect()->back()->withErrors(['error' => 'Notification introuvable.']);
         }
-
-        return redirect()->back()->with('success', 'Notification supprimée.');
     }
 
     /**
@@ -149,15 +196,30 @@ class NotificationController extends Controller
      */
     public function deleteAllRead()
     {
-        $deletedCount = auth()->user()->notifications()
-            ->read()
-            ->delete();
+        try {
+            $deletedCount = auth()->user()->notifications()
+                ->read()
+                ->delete();
 
-        if (request()->expectsJson()) {
-            return response()->json(['success' => true, 'deleted_count' => $deletedCount]);
+            if (request()->expectsJson()) {
+                return response()->json([
+                    'success' => true, 
+                    'deleted_count' => $deletedCount
+                ]);
+            }
+
+            if ($deletedCount > 0) {
+                return redirect()->back()->with('success', "{$deletedCount} notifications supprimées.");
+            } else {
+                return redirect()->back()->with('info', 'Aucune notification lue à supprimer.');
+            }
+        } catch (\Exception $e) {
+            if (request()->expectsJson()) {
+                return response()->json(['error' => 'Erreur lors de la suppression.'], 500);
+            }
+            
+            return redirect()->back()->withErrors(['error' => 'Erreur lors de la suppression des notifications.']);
         }
-
-        return redirect()->back()->with('success', "{$deletedCount} notifications supprimées.");
     }
 
     /**
@@ -169,22 +231,26 @@ class NotificationController extends Controller
             abort(403, 'Cette fonctionnalité est uniquement disponible en développement.');
         }
 
-        $types = ['stock_alert', 'expiry_alert', 'sale_created', 'prescription_ready', 'purchase_received', 'system_alert'];
-        $priorities = ['low', 'normal', 'medium', 'high'];
-        
-        $type = $types[array_rand($types)];
-        $priority = $priorities[array_rand($priorities)];
+        try {
+            $types = ['stock_alert', 'expiry_alert', 'sale_created', 'prescription_ready', 'purchase_received', 'system_alert'];
+            $priorities = ['low', 'normal', 'medium', 'high'];
+            
+            $type = $types[array_rand($types)];
+            $priority = $priorities[array_rand($priorities)];
 
-        Notification::createNotification(
-            auth()->id(),
-            $type,
-            'Notification de test',
-            'Ceci est une notification de test générée automatiquement.',
-            ['test' => true],
-            $priority
-        );
+            Notification::createNotification(
+                auth()->id(),
+                $type,
+                'Notification de test',
+                'Ceci est une notification de test générée automatiquement.',
+                ['test' => true],
+                $priority
+            );
 
-        return redirect()->back()->with('success', 'Notification de test créée.');
+            return redirect()->back()->with('success', 'Notification de test créée.');
+        } catch (\Exception $e) {
+            return redirect()->back()->withErrors(['error' => 'Erreur lors de la création de la notification de test.']);
+        }
     }
 
     /**
@@ -192,7 +258,15 @@ class NotificationController extends Controller
      */
     public function settings()
     {
-        return view('notifications.settings');
+        try {
+            $user = auth()->user();
+            $settings = $user->permissions['notifications'] ?? [];
+            
+            return view('notifications.settings', compact('settings'));
+        } catch (\Exception $e) {
+            return redirect()->route('notifications.index')
+                ->withErrors(['error' => 'Erreur lors du chargement des paramètres.']);
+        }
     }
 
     /**
@@ -208,6 +282,14 @@ class NotificationController extends Controller
             'sale_notifications' => 'boolean',
             'prescription_notifications' => 'boolean',
             'purchase_notifications' => 'boolean',
+        ], [
+            'email_notifications.boolean' => 'Le paramètre email doit être vrai ou faux.',
+            'browser_notifications.boolean' => 'Le paramètre navigateur doit être vrai ou faux.',
+            'stock_alerts.boolean' => 'Le paramètre alertes stock doit être vrai ou faux.',
+            'expiry_alerts.boolean' => 'Le paramètre alertes expiration doit être vrai ou faux.',
+            'sale_notifications.boolean' => 'Le paramètre notifications vente doit être vrai ou faux.',
+            'prescription_notifications.boolean' => 'Le paramètre notifications ordonnance doit être vrai ou faux.',
+            'purchase_notifications.boolean' => 'Le paramètre notifications achat doit être vrai ou faux.',
         ]);
 
         if ($validator->fails()) {
@@ -216,24 +298,105 @@ class NotificationController extends Controller
                 ->withInput();
         }
 
-        // Update user preferences (you might want to create a user_settings table)
-        $user = auth()->user();
-        
-        // For now, store in user's permissions field as an example
-        $settings = $user->permissions ?? [];
-        $settings['notifications'] = [
-            'email_notifications' => $request->has('email_notifications'),
-            'browser_notifications' => $request->has('browser_notifications'),
-            'stock_alerts' => $request->has('stock_alerts'),
-            'expiry_alerts' => $request->has('expiry_alerts'),
-            'sale_notifications' => $request->has('sale_notifications'),
-            'prescription_notifications' => $request->has('prescription_notifications'),
-            'purchase_notifications' => $request->has('purchase_notifications'),
-        ];
-        
-        $user->permissions = $settings;
-        $user->save();
+        try {
+            // Update user preferences
+            $user = auth()->user();
+            
+            // Get existing permissions or initialize empty array
+            $permissions = $user->permissions ?? [];
+            $permissions['notifications'] = [
+                'email_notifications' => $request->has('email_notifications'),
+                'browser_notifications' => $request->has('browser_notifications'),
+                'stock_alerts' => $request->has('stock_alerts'),
+                'expiry_alerts' => $request->has('expiry_alerts'),
+                'sale_notifications' => $request->has('sale_notifications'),
+                'prescription_notifications' => $request->has('prescription_notifications'),
+                'purchase_notifications' => $request->has('purchase_notifications'),
+                'updated_at' => now()->toISOString(),
+            ];
+            
+            $user->permissions = $permissions;
+            $user->save();
 
-        return redirect()->back()->with('success', 'Paramètres de notification mis à jour.');
+            return redirect()->back()->with('success', 'Paramètres de notification mis à jour avec succès.');
+        } catch (\Exception $e) {
+            return redirect()->back()
+                ->withErrors(['error' => 'Erreur lors de la sauvegarde des paramètres.'])
+                ->withInput();
+        }
+    }
+
+    /**
+     * Get notification statistics for dashboard.
+     */
+    public function getStatistics()
+    {
+        try {
+            $user = auth()->user();
+            
+            $stats = [
+                'total' => $user->notifications()->active()->count(),
+                'unread' => $user->notifications()->unread()->active()->count(),
+                'high_priority' => $user->notifications()->where('priority', 'high')->active()->count(),
+                'today' => $user->notifications()->where('created_at', '>=', today())->active()->count(),
+                'by_type' => $user->notifications()
+                    ->active()
+                    ->selectRaw('type, COUNT(*) as count')
+                    ->groupBy('type')
+                    ->pluck('count', 'type')
+                    ->toArray(),
+                'by_priority' => $user->notifications()
+                    ->active()
+                    ->selectRaw('priority, COUNT(*) as count')
+                    ->groupBy('priority')
+                    ->pluck('count', 'priority')
+                    ->toArray(),
+            ];
+
+            return response()->json($stats);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Erreur lors du calcul des statistiques.'], 500);
+        }
+    }
+
+    /**
+     * Bulk actions on notifications.
+     */
+    public function bulkAction(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'action' => 'required|in:mark_read,delete',
+            'notification_ids' => 'required|array',
+            'notification_ids.*' => 'integer|exists:notifications,id',
+        ]);
+
+        if ($validator->fails()) {
+            return redirect()->back()
+                ->withErrors($validator);
+        }
+
+        try {
+            $notifications = auth()->user()->notifications()
+                ->whereIn('id', $request->notification_ids);
+
+            $count = 0;
+            switch ($request->action) {
+                case 'mark_read':
+                    $count = $notifications->unread()->update(['read_at' => now()]);
+                    $message = "{$count} notifications marquées comme lues.";
+                    break;
+                    
+                case 'delete':
+                    $count = $notifications->count();
+                    $notifications->delete();
+                    $message = "{$count} notifications supprimées.";
+                    break;
+            }
+
+            return redirect()->back()->with('success', $message);
+        } catch (\Exception $e) {
+            return redirect()->back()
+                ->withErrors(['error' => 'Erreur lors de l\'action groupée.']);
+        }
     }
 }

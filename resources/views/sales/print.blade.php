@@ -248,17 +248,27 @@
         }
         
         .products-table tr:nth-child(even) td {
-            background: rgba(51, 102, 153, 0.02);
+            background: rgba(51,102, 153, 0.02);
         }
         
         .products-table tr:hover td {
             background: rgba(51, 102, 153, 0.05);
         }
         
+        .products-table tr.deleted-product td {
+            background: rgba(220, 53, 69, 0.05);
+            border-left: 3px solid #dc3545;
+        }
+        
         .product-name {
             font-weight: 600;
             color: #2c3e50;
             margin-bottom: 5px;
+        }
+        
+        .product-name.deleted {
+            color: #dc3545;
+            font-style: italic;
         }
         
         .product-dosage {
@@ -271,6 +281,13 @@
             font-size: 0.75rem;
             color: #ffc107;
             font-weight: 500;
+        }
+        
+        .product-deleted-notice {
+            font-size: 0.75rem;
+            color: #dc3545;
+            font-weight: 500;
+            font-style: italic;
         }
         
         .text-center {
@@ -641,15 +658,22 @@
                 </thead>
                 <tbody>
                     @foreach($sale->saleItems as $item)
-                        <tr>
+                        <tr class="{{ $item->product ? '' : 'deleted-product' }}">
                             <td>
-                                <div class="product-name">{{ $item->product->name }}</div>
-                                @if($item->product->dosage)
-                                    <div class="product-dosage">Dosage: {{ $item->product->dosage }}</div>
-                                @endif
-                                @if($item->product->prescription_required)
-                                    <div class="product-prescription">
-                                        <i class="fas fa-prescription-bottle me-1"></i>Ordonnance requise
+                                @if($item->product)
+                                    <div class="product-name">{{ $item->product->name }}</div>
+                                    @if($item->product->dosage)
+                                        <div class="product-dosage">Dosage: {{ $item->product->dosage }}</div>
+                                    @endif
+                                    @if($item->product->prescription_required)
+                                        <div class="product-prescription">
+                                            <i class="fas fa-prescription-bottle me-1"></i>Ordonnance requise
+                                        </div>
+                                    @endif
+                                @else
+                                    <div class="product-name deleted">{{ $item->product_name ?? 'Produit supprimé' }}</div>
+                                    <div class="product-deleted-notice">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>Ce produit a été supprimé de l'inventaire
                                     </div>
                                 @endif
                             </td>
@@ -670,7 +694,7 @@
                     <span>{{ number_format($sale->subtotal, 2) }} €</span>
                 </div>
                 <div class="total-line tax">
-                    <span><i class="fas fa-percent me-2"></i>TVA (20%):</span>
+                    <span><i class="fas fa-percent me-2"></i>TVA ({{ number_format($sale->tax_rate, 1) }}%):</span>
                     <span>{{ number_format($sale->tax_amount, 2) }} €</span>
                 </div>
                 @if($sale->discount_amount > 0)

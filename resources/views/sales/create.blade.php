@@ -74,7 +74,7 @@
         width: 50px;
         height: 50px;
         background: linear-gradient(180deg, #336699 0%, #4a90e2 100%);
-        border-radius: 15px;
+   border-radius: 15px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -378,7 +378,7 @@
                                         <th class="table-header"></th>
                                     </tr>
                                     <tr>
-                                        <th colspan="3" class="text-end table-header">TVA (20%):</th>
+                                        <th colspan="3" class="text-end table-header tax-rate-display">TVA ({{ $taxRate }}%):</th>
                                         <th class="table-header" id="tax">0.00 €</th>
                                         <th class="table-header"></th>
                                     </tr>
@@ -560,12 +560,16 @@
 @section('scripts')
 <script>
 let productCounter = 0;
+let currentTaxRate = {{ $taxRate ?? 20 }}; // Get tax rate from controller
 
 document.addEventListener('DOMContentLoaded', function() {
     const productSearch = document.getElementById('product_search');
     const hasPrescription = document.getElementById('has_prescription');
     const prescriptionField = document.getElementById('prescription_number_field');
     const clientSelect = document.getElementById('client_id');
+
+    // Load current tax rate from system settings
+    loadCurrentTaxRate();
 
     // Gérer l'affichage du champ numéro d'ordonnance avec animation
     hasPrescription.addEventListener('change', function() {
@@ -671,6 +675,34 @@ document.addEventListener('DOMContentLoaded', function() {
         submitBtn.style.background = 'linear-gradient(135deg, #6c757d 0%, #495057 100%)';
     });
 });
+
+// Load current tax rate from system settings
+function loadCurrentTaxRate() {
+    fetch('/sales/tax-rate')
+        .then(response => response.json())
+        .then(data => {
+            currentTaxRate = data.tax_rate;
+            console.log('Current tax rate loaded:', currentTaxRate + '%');
+            
+            // Update tax display in footer if it exists
+            updateTaxRateDisplay();
+            
+            // Recalculate totals if products are already added
+            calculateTotals();
+        })
+        .catch(error => {
+            console.warn('Could not load current tax rate, using default:', error);
+            currentTaxRate = {{ $taxRate ?? 20 }};
+        });
+}
+
+// Update tax rate display in the interface
+function updateTaxRateDisplay() {
+    const taxElements = document.querySelectorAll('.tax-rate-display');
+    taxElements.forEach(element => {
+        element.textContent = `TVA (${currentTaxRate}%):`;
+    });
+}
 
 function addProduct(product) {
     const tbody = document.getElementById('productsTableBody');
@@ -828,7 +860,7 @@ function calculateTotals() {
     });
 
     const discount = parseFloat(document.getElementById('discount').value) || 0;
-    const tax = subtotal * 0.20;
+    const tax = subtotal * (currentTaxRate / 100); // Use dynamic tax rate
     const finalTotal = subtotal + tax - discount;
 
     // Mise à jour des totaux avec animation
@@ -841,6 +873,12 @@ function calculateTotals() {
     taxElement.textContent = tax.toFixed(2) + ' €';
     totalElement.textContent = finalTotal.toFixed(2) + ' €';
     totalFooterElement.textContent = finalTotal.toFixed(2) + ' €';
+
+    // Update tax label with current rate
+    const taxLabels = document.querySelectorAll('.tax-rate-display');
+    taxLabels.forEach(label => {
+        label.innerHTML = `TVA (${currentTaxRate}%):`;
+    });
 
     // Animation des totaux
     [subtotalElement, taxElement, totalElement, totalFooterElement].forEach(element => {

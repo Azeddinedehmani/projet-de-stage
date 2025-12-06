@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Validator;
 
 class SystemSetting extends Model
 {
@@ -106,59 +107,175 @@ class SystemSetting extends Model
     }
 
     /**
-     * Initialize default settings
+     * Get password validation rules based on system settings
+     */
+    public static function getPasswordValidationRules($field = 'password')
+    {
+        $minLength = static::get('password_min_length', 8);
+        $requireUppercase = static::get('password_require_uppercase', false);
+        $requireLowercase = static::get('password_require_lowercase', false);
+        $requireNumbers = static::get('password_require_numbers', false);
+        $requireSymbols = static::get('password_require_symbols', false);
+
+        $rules = [
+            'required',
+            'string',
+            "min:{$minLength}",
+            'confirmed'
+        ];
+
+        // Custom validation rule for password complexity
+        if ($requireUppercase || $requireLowercase || $requireNumbers || $requireSymbols) {
+            $rules[] = function ($attribute, $value, $fail) use ($requireUppercase, $requireLowercase, $requireNumbers, $requireSymbols) {
+                $errors = [];
+
+                if ($requireUppercase && !preg_match('/[A-Z]/', $value)) {
+                    $errors[] = 'au moins une lettre majuscule';
+                }
+
+                if ($requireLowercase && !preg_match('/[a-z]/', $value)) {
+                    $errors[] = 'au moins une lettre minuscule';
+                }
+
+                if ($requireNumbers && !preg_match('/[0-9]/', $value)) {
+                    $errors[] = 'au moins un chiffre';
+                }
+
+                if ($requireSymbols && !preg_match('/[^A-Za-z0-9]/', $value)) {
+                    $errors[] = 'au moins un caractère spécial';
+                }
+
+                if (!empty($errors)) {
+                    $fail('Le mot de passe doit contenir ' . implode(', ', $errors) . '.');
+                }
+            };
+        }
+
+        return $rules;
+    }
+
+    /**
+     * Validate password against system requirements
+     */
+    public static function validatePassword($password)
+    {
+        $minLength = static::get('password_min_length', 8);
+        $requireUppercase = static::get('password_require_uppercase', false);
+        $requireLowercase = static::get('password_require_lowercase', false);
+        $requireNumbers = static::get('password_require_numbers', false);
+        $requireSymbols = static::get('password_require_symbols', false);
+
+        $errors = [];
+
+        // Length check
+        if (strlen($password) < $minLength) {
+            $errors[] = "Le mot de passe doit contenir au moins {$minLength} caractères.";
+        }
+
+        // Character requirements
+        if ($requireUppercase && !preg_match('/[A-Z]/', $password)) {
+            $errors[] = 'Le mot de passe doit contenir au moins une lettre majuscule.';
+        }
+
+        if ($requireLowercase && !preg_match('/[a-z]/', $password)) {
+            $errors[] = 'Le mot de passe doit contenir au moins une lettre minuscule.';
+        }
+
+        if ($requireNumbers && !preg_match('/[0-9]/', $password)) {
+            $errors[] = 'Le mot de passe doit contenir au moins un chiffre.';
+        }
+
+        if ($requireSymbols && !preg_match('/[^A-Za-z0-9]/', $password)) {
+            $errors[] = 'Le mot de passe doit contenir au moins un caractère spécial.';
+        }
+
+        return [
+            'valid' => empty($errors),
+            'errors' => $errors
+        ];
+    }
+
+    /**
+     * Get password strength score (0-100)
+     */
+    public static function getPasswordStrength($password)
+    {
+        $score = 0;
+        $minLength = static::get('password_min_length', 8);
+
+        // Length scoring
+        if (strlen($password) >= $minLength) $score += 25;
+        if (strlen($password) >= 12) $score += 15;
+        if (strlen($password) >= 16) $score += 10;
+
+        // Character variety scoring
+        if (preg_match('/[a-z]/', $password)) $score += 10;
+        if (preg_match('/[A-Z]/', $password)) $score += 10;
+        if (preg_match('/[0-9]/', $password)) $score += 15;
+        if (preg_match('/[^A-Za-z0-9]/', $password)) $score += 15;
+
+        return min($score, 100);
+    }
+
+    /**
+     * Get password requirements as human-readable text
+     */
+    public static function getPasswordRequirementsText()
+    {
+        $requirements = [];
+        
+        $minLength = static::get('password_min_length', 8);
+        $requirements[] = "Au moins {$minLength} caractères";
+
+        if (static::get('password_require_uppercase', false)) {
+            $requirements[] = "Au moins une lettre majuscule";
+        }
+
+        if (static::get('password_require_lowercase', false)) {
+            $requirements[] = "Au moins une lettre minuscule";
+        }
+
+        if (static::get('password_require_numbers', false)) {
+            $requirements[] = "Au moins un chiffre";
+        }
+
+        if (static::get('password_require_symbols', false)) {
+            $requirements[] = "Au moins un caractère spécial";
+        }
+
+        return $requirements;
+    }
+
+    /**
+     * Check if user needs to change password based on system settings
+     */
+    public static function userNeedsPasswordChange($user)
+    {
+        // Global force change setting
+        if (static::get('force_password_change', false)) {
+            return true;
+        }
+
+        // Individual user force change
+        if ($user->force_password_change) {
+            return true;
+        }
+
+        // Password age check
+        $maxPasswordAge = static::get('password_max_age_days', null);
+        if ($maxPasswordAge && $user->password_changed_at) {
+            return $user->password_changed_at->addDays($maxPasswordAge)->isPast();
+        }
+
+        return false;
+    }
+
+    /**
+     * Initialize default settings (used in seeder and migration)
      */
     public static function initializeDefaults()
     {
-        $defaults = [
-            // Application settings
-            'app_name' => ['value' => 'Pharmacia', 'type' => 'string', 'group' => 'app', 'description' => 'Nom de l\'application'],
-            'app_version' => ['value' => '1.0.0', 'type' => 'string', 'group' => 'app', 'description' => 'Version de l\'application'],
-            'app_logo' => ['value' => null, 'type' => 'string', 'group' => 'app', 'description' => 'Logo de l\'application'],
-            
-            // Pharmacy settings
-            'pharmacy_name' => ['value' => 'Pharmacie Centrale', 'type' => 'string', 'group' => 'pharmacy', 'description' => 'Nom de la pharmacie'],
-            'pharmacy_address' => ['value' => '123 Avenue de la Santé, 75001 Paris', 'type' => 'string', 'group' => 'pharmacy', 'description' => 'Adresse de la pharmacie'],
-            'pharmacy_phone' => ['value' => '01 23 45 67 89', 'type' => 'string', 'group' => 'pharmacy', 'description' => 'Téléphone de la pharmacie'],
-            'pharmacy_email' => ['value' => 'contact@pharmacia.com', 'type' => 'string', 'group' => 'pharmacy', 'description' => 'Email de la pharmacie'],
-            'pharmacy_siret' => ['value' => '123 456 789 00012', 'type' => 'string', 'group' => 'pharmacy', 'description' => 'Numéro SIRET'],
-            
-            // Tax settings
-            'default_tax_rate' => ['value' => '20', 'type' => 'float', 'group' => 'tax', 'description' => 'Taux de TVA par défaut (%)'],
-            'tax_included' => ['value' => false, 'type' => 'boolean', 'group' => 'tax', 'description' => 'Prix TTC par défaut'],
-            
-            // Stock settings
-            'low_stock_alert' => ['value' => true, 'type' => 'boolean', 'group' => 'stock', 'description' => 'Alertes stock faible'],
-            'auto_reorder' => ['value' => false, 'type' => 'boolean', 'group' => 'stock', 'description' => 'Réapprovisionnement automatique'],
-            'expiry_alert_days' => ['value' => '30', 'type' => 'integer', 'group' => 'stock', 'description' => 'Alertes expiration (jours)'],
-            
-            // Security settings
-            'session_lifetime' => ['value' => '120', 'type' => 'integer', 'group' => 'security', 'description' => 'Durée de session (minutes)'],
-            'force_password_change' => ['value' => false, 'type' => 'boolean', 'group' => 'security', 'description' => 'Forcer changement mot de passe'],
-            'password_min_length' => ['value' => '6', 'type' => 'integer', 'group' => 'security', 'description' => 'Longueur minimale mot de passe'],
-            'login_attempts' => ['value' => '5', 'type' => 'integer', 'group' => 'security', 'description' => 'Tentatives de connexion max'],
-            
-            // Backup settings
-            'auto_backup' => ['value' => true, 'type' => 'boolean', 'group' => 'backup', 'description' => 'Sauvegarde automatique'],
-            'backup_frequency' => ['value' => 'daily', 'type' => 'string', 'group' => 'backup', 'description' => 'Fréquence sauvegarde'],
-            'backup_retention' => ['value' => '30', 'type' => 'integer', 'group' => 'backup', 'description' => 'Rétention sauvegardes (jours)'],
-            
-            // Prescription settings
-            'prescription_validity_days' => ['value' => '90', 'type' => 'integer', 'group' => 'prescription', 'description' => 'Validité ordonnance (jours)'],
-            'prescription_renewal_alert' => ['value' => '7', 'type' => 'integer', 'group' => 'prescription', 'description' => 'Alerte renouvellement (jours)'],
-        ];
-
-        foreach ($defaults as $key => $config) {
-            if (!static::where('key', $key)->exists()) {
-                static::create([
-                    'key' => $key,
-                    'value' => $config['value'],
-                    'type' => $config['type'],
-                    'group' => $config['group'],
-                    'description' => $config['description'],
-                    'is_public' => in_array($config['group'], ['app', 'pharmacy'])
-                ]);
-            }
-        }
+        $seeder = new \Database\Seeders\SystemSettingsSeeder();
+        $seeder->run();
     }
 }

@@ -104,7 +104,7 @@
 
 <!-- Métriques de performance en temps réel -->
 <div class="row mb-4">
-    <div class="col-md-3">
+    <div class="col-md-4">
         <div class="card bg-primary text-white">
             <div class="card-body text-center">
                 <i class="fas fa-users fa-3x mb-3"></i>
@@ -114,23 +114,23 @@
             </div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card bg-warning text-dark">
-            <div class="card-body text-center">
-                <i class="fas fa-exclamation-triangle fa-3x mb-3"></i>
-                <h3 class="mb-0" id="system-alerts">{{ \App\Models\Product::whereColumn('stock_quantity', '<=', 'stock_threshold')->count() }}</h3>
-                <p class="mb-0">Alertes système</p>
-                <small class="opacity-75">Stock faible, expirations</small>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
+    <div class="col-md-4">
         <div class="card bg-info text-white">
             <div class="card-body text-center">
                 <i class="fas fa-memory fa-3x mb-3"></i>
                 <h3 class="mb-0" id="memory-usage">{{ round(memory_get_usage() / 1024 / 1024, 1) }}</h3>
                 <p class="mb-0">Mémoire utilisée (MB)</p>
                 <small class="opacity-75">Pic: {{ round(memory_get_peak_usage() / 1024 / 1024, 1) }} MB</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <i class="fas fa-chart-line fa-3x mb-3"></i>
+                <h3 class="mb-0" id="performance-score">95</h3>
+                <p class="mb-0">Score de performance</p>
+                <small class="opacity-75">Optimisation système</small>
             </div>
         </div>
     </div>
@@ -225,85 +225,6 @@
                             <h4 class="text-warning mb-1">{{ $dbStats['active_connections'] }}</h4>
                             <small class="text-muted">Connexions actives</small>
                         </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Alertes et notifications système -->
-<div class="row mb-4">
-    <div class="col-md-12">
-        <div class="card">
-            <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                <h6 class="card-title mb-0">
-                    <i class="fas fa-bell me-2"></i>Alertes système actives
-                </h6>
-                <span class="badge bg-danger">{{ \App\Models\Product::whereColumn('stock_quantity', '<=', 'stock_threshold')->count() + \App\Models\Product::where('expiry_date', '<=', now()->addDays(30))->where('expiry_date', '>', now())->count() }}</span>
-            </div>
-            <div class="card-body">
-                @php
-                    $lowStockProducts = \App\Models\Product::whereColumn('stock_quantity', '<=', 'stock_threshold')->take(5)->get();
-                    $expiringProducts = \App\Models\Product::where('expiry_date', '<=', now()->addDays(30))->where('expiry_date', '>', now())->take(5)->get();
-                    $pendingPrescriptions = \App\Models\Prescription::where('status', 'pending')->count();
-                @endphp
-                
-                <div class="row">
-                    <div class="col-md-4">
-                        <h6 class="text-danger"><i class="fas fa-boxes me-1"></i>Stock critique ({{ $lowStockProducts->count() }})</h6>
-                        @if($lowStockProducts->count() > 0)
-                            <ul class="list-unstyled">
-                                @foreach($lowStockProducts as $product)
-                                    <li class="mb-2">
-                                        <div class="d-flex justify-content-between align-items-center">
-                                            <span class="text-truncate">{{ $product->name }}</span>
-                                            <span class="badge bg-danger">{{ $product->stock_quantity }}</span>
-                                        </div>
-                                    </li>
-                                @endforeach
-                            </ul>
-                            @if(\App\Models\Product::whereColumn('stock_quantity', '<=', 'stock_threshold')->count() > 5)
-                                <small class="text-muted">... et {{ \App\Models\Product::whereColumn('stock_quantity', '<=', 'stock_threshold')->count() - 5 }} autres produits</small>
-                            @endif
-                        @else
-                            <p class="text-success mb-0"><i class="fas fa-check me-1"></i>Aucun stock critique</p>
-                        @endif
-                    </div>
-                    
-                    <div class="col-md-4">
-                        <h6 class="text-warning"><i class="fas fa-clock me-1"></i>Expirations proches ({{ $expiringProducts->count() }})</h6>
-                        @if($expiringProducts->count() > 0)
-                            <ul class="list-unstyled">
-                                @foreach($expiringProducts as $product)
-                                    <li class="mb-2">
-                                        <div class="d-flex justify-content-between align-items-center">
-                                            <span class="text-truncate">{{ $product->name }}</span>
-                                            <small class="text-warning">{{ $product->expiry_date->diffForHumans() }}</small>
-                                        </div>
-                                    </li>
-                                @endforeach
-                            </ul>
-                            @if(\App\Models\Product::where('expiry_date', '<=', now()->addDays(30))->where('expiry_date', '>', now())->count() > 5)
-                                <small class="text-muted">... et {{ \App\Models\Product::where('expiry_date', '<=', now()->addDays(30))->where('expiry_date', '>', now())->count() - 5 }} autres produits</small>
-                            @endif
-                        @else
-                            <p class="text-success mb-0"><i class="fas fa-check me-1"></i>Aucune expiration proche</p>
-                        @endif
-                    </div>
-                    
-                    <div class="col-md-4">
-                        <h6 class="text-info"><i class="fas fa-file-prescription me-1"></i>Ordonnances en attente ({{ $pendingPrescriptions }})</h6>
-                        @if($pendingPrescriptions > 0)
-                            <div class="alert alert-info py-2">
-                                <strong>{{ $pendingPrescriptions }}</strong> ordonnance(s) en attente de traitement
-                            </div>
-                            <a href="{{ route('prescriptions.index', ['status' => 'pending']) }}" class="btn btn-outline-info btn-sm">
-                                <i class="fas fa-eye me-1"></i>Voir les ordonnances
-                            </a>
-                        @else
-                            <p class="text-success mb-0"><i class="fas fa-check me-1"></i>Aucune ordonnance en attente</p>
-                        @endif
                     </div>
                 </div>
             </div>
@@ -472,6 +393,7 @@
         // Simulation de rafraîchissement des métriques
         document.getElementById('active-users').textContent = Math.floor(Math.random() * 10) + 1;
         document.getElementById('memory-usage').textContent = (Math.random() * 100 + 50).toFixed(1);
+        document.getElementById('performance-score').textContent = Math.floor(Math.random() * 15) + 85;
         
         // Animation de mise à jour
         document.querySelectorAll('.card').forEach(card => {
@@ -560,8 +482,7 @@
             toastElement.remove();
         });
     }
-
-    // Calcul uptime simulé
+// Calcul uptime simulé
     function updateUptime() {
         const startTime = new Date().getTime() - (Math.random() * 86400000 * 7); // Jusqu'à 7 jours
         const now = new Date().getTime();
